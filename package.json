@@ -4,7 +4,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "db:init": "psql \"$DATABASE_URL\" -f ./src/db/schema.sql",
+    "db:init": "node ./dist/db/initDb.js",
     "dev": "ts-node ./src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node ./dist/index.js"

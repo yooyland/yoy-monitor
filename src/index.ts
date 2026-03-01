@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { ENV } from './config/env.js';
-import { initDb } from './db/index.js';
+import { initDb } from './db/initDb.js';
 import { warmAddressCache, getCacheSize } from './services/addressCache.js';
 import { startRealtimeListener } from './services/realtimeListener.js';
 import { initialBackfill, miniBackfillLoop } from './services/backfill.js';
@@ -8,7 +8,8 @@ import { pollAddressesOnce } from './services/etherscanPoller.js';
 
 async function main() {
   console.log('[App] Starting YOY monitor on chain', ENV.CHAIN_ID);
-  await initDb();
+  // Initialize DB schema once on startup; don't crash if it fails
+  await initDb({ continueOnError: true });
   await warmAddressCache();
   console.log('[App] Monitored addresses in cache:', getCacheSize());
 
