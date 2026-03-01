@@ -55,12 +55,12 @@ export async function hasTx(txHash: string, logIndex: number) {
     `SELECT 1 FROM token_transactions WHERE tx_hash=$1 AND log_index=$2 LIMIT 1`,
     [txHash, logIndex]
   );
-  return r.rowCount > 0;
+  return (r.rowCount ?? 0) > 0;
 }
 
 export async function hasTxHashAnyIndex(txHash: string) {
   const r = await pool.query(`SELECT 1 FROM token_transactions WHERE tx_hash=$1 LIMIT 1`, [txHash]);
-  return r.rowCount > 0;
+  return (r.rowCount ?? 0) > 0;
 }
 
 export async function setBalance(addrChecksum: string, balance: string) {

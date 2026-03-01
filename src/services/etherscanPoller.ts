@@ -48,9 +48,9 @@ function tryDecodeToAndValue(input: string) {
 async function getTxReceiptStatus(txhash: string): Promise<'success'|'failed'|null> {
   try {
     const url = `https://api.etherscan.io/api?module=transaction&action=gettxreceiptstatus&txhash=${txhash}&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
-    const r = await fetch(url);
-    const j = await r.json();
-    const s = j?.result?.status;
+    const res = await fetch(url);
+    const data = (await res.json()) as any;
+    const s = data?.result?.status;
     if (s === '1') return 'success';
     if (s === '0') return 'failed';
     return null;
@@ -61,10 +61,14 @@ async function getTxReceiptStatus(txhash: string): Promise<'success'|'failed'|nu
 
 async function fetchTxList(address: string) {
   const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=desc&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
-  const r = await fetch(url);
-  const j = await r.json();
-  if (j.status !== '1' || !Array.isArray(j.result)) return [];
-  return j.result as Tx[];
+  const res = await fetch(url);
+  const data = (await res.json()) as any;
+  if (!data?.result || !Array.isArray(data.result)) {
+    console.log('No result from Etherscan');
+    return [];
+  }
+  if (data.status !== '1') return [];
+  return data.result as Tx[];
 }
 
 export async function startEtherscanPolling() {
