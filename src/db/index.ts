@@ -28,6 +28,15 @@ export async function getBalanceByAddress(addrChecksum: string): Promise<string|
   return String(r.rows[0].token_balance);
 }
 
+export async function getBalanceMulti(addrChecksum: string, assetKey: string): Promise<string|null> {
+  const r = await pool.query(
+    `SELECT token_balance FROM balances_multi WHERE address=$1 AND asset_key=$2 LIMIT 1`,
+    [addrChecksum, assetKey]
+  );
+  if ((r.rowCount ?? 0) === 0) return null;
+  return String(r.rows[0].token_balance);
+}
+
 export async function upsertAddress(addrChecksum: string, userId?: string) {
   await pool.query(
     `INSERT INTO monitored_addresses (address, user_id, is_active)
@@ -41,7 +50,7 @@ export async function upsertAddress(addrChecksum: string, userId?: string) {
 export async function getTransactionsForAddress(addrLower: string, opts: { page: number; limit: number; }) {
   const offset = (opts.page - 1) * opts.limit;
   const r = await pool.query(
-    `SELECT tx_hash, log_index, block_number, from_address, to_address, amount, status, timestamp, source
+    `SELECT tx_hash, log_index, block_number, from_address, to_address, amount, status, timestamp, source, asset_symbol, asset_contract, is_native
      FROM token_transactions
      WHERE from_address = $1 OR to_address = $1
      ORDER BY block_number DESC NULLS LAST, log_index DESC
@@ -59,13 +68,22 @@ export async function insertTx(rec: {
   status: 'success'|'failed';
   timestamp: Date;
   source: 'wss'|'backfill'|'etherscan';
+  asset_symbol?: string;
+  asset_contract?: string|null;
+  is_native?: boolean;
 }) {
   await pool.query(
     `INSERT INTO token_transactions
-     (tx_hash, log_index, block_number, from_address, to_address, amount, status, timestamp, source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     (tx_hash, log_index, block_number, from_address, to_address, amount, status, timestamp, source, asset_symbol, asset_contract, is_native)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (tx_hash, log_index) DO NOTHING`,
-    [rec.txHash, rec.logIndex, rec.blockNumber, rec.from, rec.to, rec.amount, rec.status, rec.timestamp, rec.source]
+    [
+      rec.txHash, rec.logIndex, rec.blockNumber, rec.from, rec.to,
+      rec.amount, rec.status, rec.timestamp, rec.source,
+      rec.asset_symbol || 'YOY',
+      rec.asset_contract || null,
+      rec.is_native === true
+    ]
   );
 }
 
@@ -89,6 +107,16 @@ export async function setBalance(addrChecksum: string, balance: string) {
      ON CONFLICT (address)
      DO UPDATE SET token_balance=EXCLUDED.token_balance, updated_at=NOW()`,
     [addrChecksum, balance]
+  );
+}
+
+export async function setBalanceMulti(addrChecksum: string, assetKey: string, balance: string) {
+  await pool.query(
+    `INSERT INTO balances_multi (address, asset_key, token_balance)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (address, asset_key)
+     DO UPDATE SET token_balance=EXCLUDED.token_balance, updated_at=NOW()`,
+    [addrChecksum, assetKey, balance]
   );
 }
 

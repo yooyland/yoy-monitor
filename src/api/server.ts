@@ -5,7 +5,7 @@ import {
   upsertAddress,
   getBalanceByAddress,
   getTransactionsForAddress,
-  setBalance
+  getBalanceMulti
 } from '../db/index.js';
 import { normalizeAddress } from '../services/erc20.js';
 import { refreshBalance } from '../services/balances.js';
@@ -35,14 +35,30 @@ export function startApiServer() {
     }
   });
 
-  // Get balance for an address (from DB; refresh in background when possible)
+  // Get balance for an address; if ?asset= omitted, returns multi-assets map
   app.get('/balances/:address', async (req, res) => {
     try {
       const checksum = normalizeAddress(String(req.params.address));
-      const bal = await getBalanceByAddress(checksum);
-      // Fire-and-forget refresh
+      const asset = req.query.asset ? String(req.query.asset).toUpperCase() : undefined;
+      if (asset) {
+        const bal = await getBalanceMulti(checksum, asset);
+        void refreshBalance(checksum).catch(() => {});
+        return res.json({ ok: true, address: checksum, asset, balance: bal ?? '0' });
+      }
+      // default: return common assets
+      const [yoy, eth] = await Promise.all([
+        getBalanceMulti(checksum, 'YOY'),
+        getBalanceMulti(checksum, 'ETH')
+      ]);
       void refreshBalance(checksum).catch(() => {});
-      res.json({ ok: true, address: checksum, balance: bal ?? '0' });
+      res.json({
+        ok: true,
+        address: checksum,
+        balances: {
+          YOY: yoy ?? '0',
+          ETH: eth ?? '0'
+        }
+      });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || String(e) });
     }

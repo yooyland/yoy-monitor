@@ -29,6 +29,19 @@ export async function initDb(options: InitOptions = {}) {
     });
     await pool.query(sql);
     console.log('[DB] Schema initialized (idempotent).');
+    // Lightweight migrations for multi-asset support
+    await pool.query(`ALTER TABLE token_transactions ADD COLUMN IF NOT EXISTS asset_symbol TEXT NOT NULL DEFAULT 'YOY'`);
+    await pool.query(`ALTER TABLE token_transactions ADD COLUMN IF NOT EXISTS asset_contract TEXT`);
+    await pool.query(`ALTER TABLE token_transactions ADD COLUMN IF NOT EXISTS is_native BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS balances_multi (
+        address TEXT NOT NULL,
+        asset_key TEXT NOT NULL, -- e.g., 'ETH' or 'YOY' or 'USDT'
+        token_balance TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (address, asset_key)
+      )
+    `);
   } catch (e: any) {
     const msg = String(e?.message || e);
     console.warn('[DB] initDb error:', msg);

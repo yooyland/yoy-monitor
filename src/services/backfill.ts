@@ -1,6 +1,6 @@
-import { JsonRpcProvider, Contract, formatUnits, toNumber } from 'ethers';
+import { JsonRpcProvider } from 'ethers';
 import { ENV } from '../config/env.js';
-import { erc20Iface, TRANSFER_TOPIC } from './erc20.js';
+import { erc20Iface, TRANSFER_TOPIC, getMonitoredTokens } from './erc20.js';
 import { insertTx, getSyncCursor, setSyncCursor } from '../db/index.js';
 import { isMonitoredLower } from './addressCache.js';
 
@@ -30,11 +30,12 @@ export async function miniBackfillLoop() {
 async function rangeBackfill(fromBlock: number, toBlock: number, source: 'backfill') {
   if (toBlock < fromBlock) return;
   const step = 2000;
+  const tokenAddrs = getMonitoredTokens().map(t => t.address);
   for (let start = fromBlock; start <= toBlock; start += step) {
     const end = Math.min(toBlock, start + step - 1);
     try {
       const logs = await provider.getLogs({
-        address: ENV.YOY_CONTRACT,
+        address: tokenAddrs as any,
         topics: [TRANSFER_TOPIC],
         fromBlock: start,
         toBlock: end
@@ -48,6 +49,9 @@ async function rangeBackfill(fromBlock: number, toBlock: number, source: 'backfi
           if (!isMonitoredLower(fromLower) && !isMonitoredLower(toLower)) continue;
           const parsed = erc20Iface.decodeEventLog('Transfer', log.data, log.topics);
           const value = parsed[2] as bigint;
+          const addr = String((log as any).address);
+          const tok = getMonitoredTokens().find(t => t.address.toLowerCase() === addr.toLowerCase());
+          const symbol = tok?.symbol || 'TOKEN';
           await insertTx({
             txHash: String(log.transactionHash),
             logIndex: Number((log as any).index ?? (log as any).logIndex ?? 0),
@@ -57,7 +61,10 @@ async function rangeBackfill(fromBlock: number, toBlock: number, source: 'backfi
             amount: value.toString(),
             status: 'success',
             timestamp: new Date(),
-            source
+            source,
+            asset_symbol: symbol,
+            asset_contract: addr,
+            is_native: false
           });
         } catch {}
       }

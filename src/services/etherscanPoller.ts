@@ -2,6 +2,7 @@ import fetch from 'node-fetch';
 import { ENV } from '../config/env.js';
 import { insertTx, hasTxHashAnyIndex } from '../db/index.js';
 import { isMonitoredLower } from './addressCache.js';
+import { getMonitoredTokens } from './erc20.js';
 
 type Tx = {
   hash: string;
@@ -92,36 +93,69 @@ export async function pollAddressesOnce(addressesLower: string[]) {
   for (const addrLower of addressesLower) {
     try {
       const txs = await fetchTxList(addrLower);
+      const tokenIndex = new Map(getMonitoredTokens().map(t => [t.address.toLowerCase(), t]));
       for (const tx of txs) {
         try {
-          // Only YOY contract interactions
-          if (!tx.to || tx.to.toLowerCase() !== ENV.YOY_CONTRACT.toLowerCase()) continue;
-          const method = decodeMethod(tx.input);
-          if (!method) continue;
-          const decoded = tryDecodeToAndValue(tx.input);
-          const decodedTo = decoded?.to || null;
-          const decodedVal = decoded?.value || null;
-          const involvesMonitored =
-            isMonitoredLower((tx.from || '').toLowerCase()) ||
-            (decodedTo ? isMonitoredLower(decodedTo.toLowerCase()) : false);
-          if (!involvesMonitored) continue;
+          // ERC-20 contract interactions
+          if (tx.to && tokenIndex.has(tx.to.toLowerCase())) {
+            const tok = tokenIndex.get(tx.to.toLowerCase())!;
+            const method = decodeMethod(tx.input);
+            if (!method) continue;
+            const decoded = tryDecodeToAndValue(tx.input);
+            const decodedTo = decoded?.to || null;
+            const decodedVal = decoded?.value || null;
+            const involvesMonitored =
+              isMonitoredLower((tx.from || '').toLowerCase()) ||
+              (decodedTo ? isMonitoredLower(decodedTo.toLowerCase()) : false);
+            if (!involvesMonitored) continue;
 
-          if (await hasTxHashAnyIndex(tx.hash)) continue; // already seen via logs
+            if (await hasTxHashAnyIndex(tx.hash)) continue; // already seen via logs
 
-          const status = await getTxReceiptStatus(tx.hash);
-          if (!status) continue;
+            const status = await getTxReceiptStatus(tx.hash);
+            if (!status) continue;
 
-          await insertTx({
-            txHash: tx.hash,
-            logIndex: -1, // Etherscan rows always -1
-            blockNumber: Number(tx.blockNumber || 0),
-            from: String(tx.from || '').toLowerCase(),
-            to: (decodedTo || String(tx.to || '')).toLowerCase(),
-            amount: decodedVal ? decodedVal : null,
-            status,
-            timestamp: new Date(Number(tx.timeStamp || '0') * 1000),
-            source: 'etherscan'
-          });
+            await insertTx({
+              txHash: tx.hash,
+              logIndex: -1, // Etherscan rows always -1 (ERC-20)
+              blockNumber: Number(tx.blockNumber || 0),
+              from: String(tx.from || '').toLowerCase(),
+              to: (decodedTo || String(tx.to || '')).toLowerCase(),
+              amount: decodedVal ? decodedVal : null,
+              status,
+              timestamp: new Date(Number(tx.timeStamp || '0') * 1000),
+              source: 'etherscan',
+              asset_symbol: tok.symbol,
+              asset_contract: tok.address,
+              is_native: false
+            });
+            continue;
+          }
+
+          // Native ETH transfer: value > 0
+          const val = BigInt(tx.value || '0');
+          if (val > 0n) {
+            const involvesMonitored =
+              isMonitoredLower((tx.from || '').toLowerCase()) ||
+              isMonitoredLower((tx.to || '').toLowerCase());
+            if (!involvesMonitored) continue;
+            if (await hasTxHashAnyIndex(tx.hash)) continue;
+            const status = await getTxReceiptStatus(tx.hash);
+            if (!status) continue;
+            await insertTx({
+              txHash: tx.hash,
+              logIndex: -2, // Native ETH marker to avoid clash with -1
+              blockNumber: Number(tx.blockNumber || 0),
+              from: String(tx.from || '').toLowerCase(),
+              to: String(tx.to || '').toLowerCase(),
+              amount: val.toString(),
+              status,
+              timestamp: new Date(Number(tx.timeStamp || '0') * 1000),
+              source: 'etherscan',
+              asset_symbol: 'ETH',
+              asset_contract: null,
+              is_native: true
+            });
+          }
         } catch {}
       }
     } catch (e) {

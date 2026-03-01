@@ -1,12 +1,13 @@
 import { WebSocketProvider, Log } from 'ethers';
 import { ENV } from '../config/env.js';
-import { erc20Iface, TRANSFER_TOPIC } from './erc20.js';
+import { erc20Iface, TRANSFER_TOPIC, getMonitoredTokens } from './erc20.js';
 import { insertTx } from '../db/index.js';
 import { isMonitoredLower } from './addressCache.js';
 
 export async function startRealtimeListener() {
   const ws = new WebSocketProvider(ENV.INFURA_WSS, ENV.CHAIN_ID);
-  const filter = { address: ENV.YOY_CONTRACT, topics: [TRANSFER_TOPIC] };
+  const tokenAddrs = getMonitoredTokens().map(t => t.address);
+  const filter = { address: tokenAddrs, topics: [TRANSFER_TOPIC] } as any;
   const onLog = async (log: Log) => {
     try {
       if (!log.topics || log.topics.length < 3) return;
@@ -19,6 +20,10 @@ export async function startRealtimeListener() {
       const toLower = to.toLowerCase();
       if (!isMonitoredLower(fromLower) && !isMonitoredLower(toLower)) return;
 
+      const addr = String(log.address);
+      const tok = getMonitoredTokens().find(t => t.address.toLowerCase() === addr.toLowerCase());
+      const symbol = tok?.symbol || 'TOKEN';
+
       await insertTx({
         txHash: String(log.transactionHash),
         logIndex: Number((log as any).index ?? (log as any).logIndex ?? 0),
@@ -28,7 +33,10 @@ export async function startRealtimeListener() {
         amount: value.toString(),
         status: 'success',
         timestamp: new Date(),
-        source: 'wss'
+        source: 'wss',
+        asset_symbol: symbol,
+        asset_contract: addr,
+        is_native: false
       });
     } catch (e) {
       console.warn('[WSS] handle log error:', String((e as any)?.message || e));
