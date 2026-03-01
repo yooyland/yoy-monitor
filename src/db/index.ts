@@ -22,6 +22,12 @@ export async function getAllActiveAddresses(): Promise<string[]> {
   return r.rows.map((x: any) => x.address);
 }
 
+export async function getBalanceByAddress(addrChecksum: string): Promise<string|null> {
+  const r = await pool.query(`SELECT token_balance FROM balances WHERE address=$1 LIMIT 1`, [addrChecksum]);
+  if ((r.rowCount ?? 0) === 0) return null;
+  return String(r.rows[0].token_balance);
+}
+
 export async function upsertAddress(addrChecksum: string, userId?: string) {
   await pool.query(
     `INSERT INTO monitored_addresses (address, user_id, is_active)
@@ -30,6 +36,19 @@ export async function upsertAddress(addrChecksum: string, userId?: string) {
      SET is_active=TRUE, user_id=COALESCE(EXCLUDED.user_id, monitored_addresses.user_id)`,
     [addrChecksum, userId || null]
   );
+}
+
+export async function getTransactionsForAddress(addrLower: string, opts: { page: number; limit: number; }) {
+  const offset = (opts.page - 1) * opts.limit;
+  const r = await pool.query(
+    `SELECT tx_hash, log_index, block_number, from_address, to_address, amount, status, timestamp, source
+     FROM token_transactions
+     WHERE from_address = $1 OR to_address = $1
+     ORDER BY block_number DESC NULLS LAST, log_index DESC
+     LIMIT $2 OFFSET $3`,
+    [addrLower, opts.limit, offset]
+  );
+  return r.rows;
 }
 
 export async function insertTx(rec: {

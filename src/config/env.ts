@@ -3,7 +3,14 @@ import { getAddress } from 'ethers';
 
 const need = (k: string) => {
   const v = process.env[k];
-  if (!v) throw new Error(`Missing env: ${k}`);
+  if (!v) {
+    if (k === 'DATABASE_URL') {
+      console.error('[DB] DATABASE_URL is missing');
+    } else {
+      console.error(`[ENV] Missing env: ${k}`);
+    }
+    throw new Error(`Missing env: ${k}`);
+  }
   return v;
 };
 
@@ -17,6 +24,7 @@ export const ENV = {
   BACKFILL_BLOCKS: Number(process.env.BACKFILL_BLOCKS || 20000),
   MINI_BACKFILL_BLOCKS: Number(process.env.MINI_BACKFILL_BLOCKS || 200),
   ETHERSCAN_POLL_INTERVAL: Number(process.env.ETHERSCAN_POLL_INTERVAL || 60000),
-  BATCH_SIZE: Number(process.env.BATCH_SIZE || 25)
+  BATCH_SIZE: Number(process.env.BATCH_SIZE || 25),
+  API_PORT: Number(process.env.PORT || process.env.API_PORT || 8080)
 };
 
