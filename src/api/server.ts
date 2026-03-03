@@ -46,7 +46,7 @@ export function startApiServer() {
       await upsertUserAddress(uid, checksum);
       // Also enroll globally for monitoring and refresh its balances
       await upsertAddress(checksum, uid);
-      try { await refreshBalance(checksum); } catch {}
+      void refreshBalance(checksum).catch(() => {});
       res.json({ ok: true, uid, address: checksum });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || String(e) });
@@ -88,11 +88,11 @@ export function startApiServer() {
       const checksum = normalizeAddress(raw);
       await upsertAddress(checksum, userId);
       // Optional: refresh balance immediately
-      try { await refreshBalance(checksum); } catch {}
+      void refreshBalance(checksum).catch(() => {});
       // Seed etherscan polling once for historical catch-up (non-blocking)
       try {
         const { pollAddressesOnce } = await import('../services/etherscanPoller.js');
-        void pollAddressesOnce([checksum.toLowerCase()]);
+        void pollAddressesOnce([checksum.toLowerCase()]).catch(() => {});
       } catch {}
       res.json({ ok: true, address: checksum });
     } catch (e: any) {
@@ -107,10 +107,10 @@ export function startApiServer() {
       if (!raw) return res.status(400).json({ error: 'address required' });
       const checksum = normalizeAddress(raw);
       await upsertAddress(checksum, undefined);
-      try { await refreshBalance(checksum); } catch {}
+      void refreshBalance(checksum).catch(() => {});
       try {
         const { pollAddressesOnce } = await import('../services/etherscanPoller.js');
-        void pollAddressesOnce([checksum.toLowerCase()]);
+        void pollAddressesOnce([checksum.toLowerCase()]).catch(() => {});
       } catch {}
       res.json({ ok: true, address: checksum, note: 'debug registration queued backfill' });
     } catch (e: any) {
