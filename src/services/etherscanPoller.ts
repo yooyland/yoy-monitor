@@ -23,23 +23,54 @@ function maskApiKeyInUrl(u: string): string {
   return u.replace(/(apikey=)[^&]+/i, '$1***');
 }
 
+const RATE_DELAY_MS = 1200; // at least 1.2s between requests
+const MAX_RETRIES = 4;      // 1 + 3 retries with backoff
+let lastEtherscanCallAt = 0;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function fetchJsonWithLogs(url: string): Promise<any | null> {
   const masked = maskApiKeyInUrl(url);
-  try {
-    const res = await fetch(url);
-    const ct = String(res.headers.get('content-type') || '');
-    const status = res.status;
-    const text = await res.text();
-    try { console.log('[Etherscan] GET', masked, 'status=', status, 'ct=', ct, 'body.head=', text.slice(0, 120)); } catch {}
-    // Guard: Non-JSON responses (e.g., HTML error pages)
-    if (!text.trim().startsWith('{')) {
-      throw new Error('Non-JSON from Etherscan: ' + text.slice(0, 80));
+  let attempt = 0;
+  while (attempt < MAX_RETRIES) {
+    attempt += 1;
+    // Global spacing across all Etherscan calls
+    const now = Date.now();
+    const waitMs = Math.max(0, RATE_DELAY_MS - (now - lastEtherscanCallAt));
+    if (waitMs > 0) await sleep(waitMs);
+    lastEtherscanCallAt = Date.now();
+    try {
+      const res = await fetch(url);
+      const ct = String(res.headers.get('content-type') || '');
+      const status = res.status;
+      const text = await res.text();
+      try { console.log('[Etherscan] GET', masked, 'status=', status, 'ct=', ct, 'body.head=', text.slice(0, 120)); } catch {}
+      // Guard: Non-JSON responses (e.g., HTML error pages)
+      if (!text.trim().startsWith('{')) {
+        throw new Error('Non-JSON from Etherscan: ' + text.slice(0, 80));
+      }
+      let data: any;
+      try { data = JSON.parse(text); } catch { throw new Error('JSON parse failed'); }
+      // Backoff if API signals non-success (status !== '1') and there is a result to check
+      const apiStatus = typeof data?.status === 'string' ? data.status : undefined;
+      if (apiStatus && apiStatus !== '1' && attempt < MAX_RETRIES) {
+        const backoff = RATE_DELAY_MS * (2 ** (attempt - 1));
+        try { console.warn('[Etherscan] api status not success (status=', apiStatus, ') retrying in', backoff, 'ms'); } catch {}
+        await sleep(backoff);
+        continue;
+      }
+      return data;
+    } catch (e) {
+      if (attempt >= MAX_RETRIES) {
+        console.warn('[Etherscan] fetch failed (final)', masked, String((e as any)?.message || e));
+        return null;
+      }
+      const backoff = RATE_DELAY_MS * (2 ** (attempt - 1));
+      console.warn('[Etherscan] fetch failed, retrying in', backoff, 'ms', masked, String((e as any)?.message || e));
+      await sleep(backoff);
+      continue;
     }
-    try { return JSON.parse(text); } catch { throw new Error('JSON parse failed'); }
-  } catch (e) {
-    console.warn('[Etherscan] fetch failed', masked, String((e as any)?.message || e));
-    return null;
   }
+  return null;
 }
 
 function decodeMethod(input: string) {
