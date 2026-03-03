@@ -24,9 +24,7 @@ export async function initDb(options: InitOptions = {}) {
     const sql = fs.readFileSync(schemaPath, 'utf8');
     pool = new Pool({
       connectionString: ENV.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production'
-        ? { rejectUnauthorized: false }
-        : undefined,
+      ssl: { rejectUnauthorized: false },
     });
     await pool.query(sql);
     console.log('[DB] Schema initialized (idempotent).');
