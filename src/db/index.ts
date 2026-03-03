@@ -48,7 +48,13 @@ export async function upsertUserAddress(uid: string, addrChecksum: string) {
 }
 
 export async function getUserAddresses(uid: string): Promise<string[]> {
-  const r = await pool.query(`SELECT address FROM user_addresses WHERE uid=$1`, [uid]);
+  // Union of explicit user_addresses and monitored_addresses.user_id linkage
+  const r = await pool.query(
+    `SELECT address FROM user_addresses WHERE uid=$1
+     UNION
+     SELECT address FROM monitored_addresses WHERE user_id=$1 AND is_active=TRUE`,
+    [uid]
+  );
   return r.rows.map((x: any) => String(x.address));
 }
 
