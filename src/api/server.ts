@@ -89,6 +89,11 @@ export function startApiServer() {
       await upsertAddress(checksum, userId);
       // Optional: refresh balance immediately
       try { await refreshBalance(checksum); } catch {}
+      // Seed etherscan polling once for historical catch-up (non-blocking)
+      try {
+        const { pollAddressesOnce } = await import('../services/etherscanPoller.js');
+        void pollAddressesOnce([checksum.toLowerCase()]);
+      } catch {}
       res.json({ ok: true, address: checksum });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || String(e) });

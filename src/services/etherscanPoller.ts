@@ -72,6 +72,46 @@ async function fetchTxList(address: string) {
   return data.result as Tx[];
 }
 
+type TokenTx = {
+  blockNumber: string;
+  timeStamp: string;
+  hash: string;
+  nonce: string;
+  blockHash: string;
+  from: string;
+  contractAddress: string;
+  to: string;
+  value: string;
+  tokenName: string;
+  tokenSymbol: string;
+  tokenDecimal: string;
+  transactionIndex: string;
+  gas: string;
+  gasPrice: string;
+  gasUsed: string;
+  cumulativeGasUsed: string;
+  input: string;
+  confirmations: string;
+};
+
+async function fetchTokenTxList(addressLower: string): Promise<TokenTx[]> {
+  // Query per monitored token to reduce noise and ensure symbol/decimals match
+  const toks = getMonitoredTokens();
+  const all: TokenTx[] = [];
+  for (const t of toks) {
+    try {
+      const url = `https://api.etherscan.io/api?module=account&action=tokentx&contractaddress=${t.address}&address=${addressLower}&page=1&offset=100&sort=desc&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
+      const res = await fetch(url);
+      const data = (await res.json()) as any;
+      if (!data?.result || !Array.isArray(data.result)) continue;
+      for (const j of data.result as any[]) {
+        all.push(j as TokenTx);
+      }
+    } catch {}
+  }
+  return all;
+}
+
 export async function startEtherscanPolling() {
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
   while (true) {
@@ -92,6 +132,35 @@ export async function startEtherscanPolling() {
 export async function pollAddressesOnce(addressesLower: string[]) {
   for (const addrLower of addressesLower) {
     try {
+      // 1) ERC-20 transfers via explicit tokentx endpoint (reliable backfill)
+      const tokTxs = await fetchTokenTxList(addrLower);
+      for (const tt of tokTxs) {
+        try {
+          if (await hasTxHashAnyIndex(tt.hash)) continue;
+          // Only process if this address is either sender or receiver and is monitored (it should be)
+          const involvesMon =
+            isMonitoredLower(String(tt.from || '').toLowerCase()) ||
+            isMonitoredLower(String(tt.to || '').toLowerCase());
+          if (!involvesMon) continue;
+          const symbol = String(tt.tokenSymbol || 'YOY').toUpperCase();
+          await insertTx({
+            txHash: tt.hash,
+            logIndex: -1,
+            blockNumber: Number(tt.blockNumber || 0),
+            from: String(tt.from || '').toLowerCase(),
+            to: String(tt.to || '').toLowerCase(),
+            amount: String(tt.value || '0'),
+            status: 'success', // Etherscan tokentx doesn't include receipt status; assume success here
+            timestamp: new Date(Number(tt.timeStamp || '0') * 1000),
+            source: 'etherscan',
+            asset_symbol: symbol,
+            asset_contract: String(tt.contractAddress || '').toLowerCase() || null,
+            is_native: false
+          });
+        } catch {}
+      }
+
+      // 2) Full txlist for ETH native and ERC-20 function calls (decode)
       const txs = await fetchTxList(addrLower);
       const tokenIndex = new Map(getMonitoredTokens().map(t => [t.address.toLowerCase(), t]));
       for (const tx of txs) {
