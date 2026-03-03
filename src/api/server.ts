@@ -3,12 +3,17 @@ import cors from 'cors';
 import { ENV } from '../config/env.js';
 import {
   upsertAddress,
+  upsertUserAddress,
+  getUserAddresses,
   getBalanceByAddress,
   getTransactionsForAddress,
-  getBalanceMulti
+  getBalanceMulti,
+  getBalancesForUser,
+  getTransactionsForUser
 } from '../db/index.js';
 import { normalizeAddress } from '../services/erc20.js';
 import { refreshBalance } from '../services/balances.js';
+import { firebaseAuth } from '../middleware/firebaseAuth.js';
 
 export function startApiServer() {
   const app = express();
@@ -17,6 +22,61 @@ export function startApiServer() {
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true, chainId: ENV.CHAIN_ID });
+  });
+
+  // Authenticated: current user's addresses
+  app.get('/me/addresses', firebaseAuth, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid as string | undefined;
+      if (!uid) return res.status(401).json({ error: 'unauthorized' });
+      const list = await getUserAddresses(uid);
+      res.json({ ok: true, uid, addresses: list });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || String(e) });
+    }
+  });
+
+  app.post('/me/addresses', firebaseAuth, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid as string | undefined;
+      if (!uid) return res.status(401).json({ error: 'unauthorized' });
+      const raw = String(req.body?.address || '');
+      if (!raw) return res.status(400).json({ error: 'address required' });
+      const checksum = normalizeAddress(raw);
+      await upsertUserAddress(uid, checksum);
+      // Also enroll globally for monitoring and refresh its balances
+      await upsertAddress(checksum, uid);
+      try { await refreshBalance(checksum); } catch {}
+      res.json({ ok: true, uid, address: checksum });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || String(e) });
+    }
+  });
+
+  // Aggregated balances for current user (sum across owned addresses)
+  app.get('/me/balances', firebaseAuth, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid as string | undefined;
+      if (!uid) return res.status(401).json({ error: 'unauthorized' });
+      const balances = await getBalancesForUser(uid);
+      res.json({ ok: true, uid, balances });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || String(e) });
+    }
+  });
+
+  // Transactions across all owned addresses
+  app.get('/me/transactions', firebaseAuth, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid as string | undefined;
+      if (!uid) return res.status(401).json({ error: 'unauthorized' });
+      const page = Math.max(1, Number(req.query.page || 1));
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit || 25)));
+      const txs = await getTransactionsForUser(uid, { page, limit });
+      res.json({ ok: true, uid, page, limit, transactions: txs });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || String(e) });
+    }
   });
 
   // Add or reactivate a monitored address
@@ -79,8 +139,9 @@ export function startApiServer() {
     }
   });
 
-  app.listen(ENV.API_PORT, () => {
-    console.log(`[API] listening on :${ENV.API_PORT}`);
+  const port = Number(process.env.PORT || ENV.API_PORT);
+  app.listen(port, () => {
+    console.log(`[API] listening on :${port}`);
   });
 }
 

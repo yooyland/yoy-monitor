@@ -38,6 +38,38 @@ export async function getBalanceMulti(addrChecksum: string, assetKey: string): P
   return String(r.rows[0].token_balance);
 }
 
+export async function upsertUserAddress(uid: string, addrChecksum: string) {
+  await pool.query(
+    `INSERT INTO user_addresses (uid, address)
+     VALUES ($1, $2)
+     ON CONFLICT (uid, address) DO NOTHING`,
+    [uid, addrChecksum]
+  );
+}
+
+export async function getUserAddresses(uid: string): Promise<string[]> {
+  const r = await pool.query(`SELECT address FROM user_addresses WHERE uid=$1`, [uid]);
+  return r.rows.map((x: any) => String(x.address));
+}
+
+export async function getBalancesForUser(uid: string): Promise<Record<string, string>> {
+  // Aggregate sums across all addresses for the user
+  const addrs = await getUserAddresses(uid);
+  if (addrs.length === 0) return {};
+  const r = await pool.query(
+    `SELECT asset_key, SUM((token_balance)::numeric) as total
+     FROM balances_multi
+     WHERE address = ANY($1::text[])
+     GROUP BY asset_key`,
+    [addrs]
+  );
+  const out: Record<string, string> = {};
+  for (const row of r.rows) {
+    out[String(row.asset_key)] = String(row.total ?? '0');
+  }
+  return out;
+}
+
 export async function upsertAddress(addrChecksum: string, userId?: string) {
   await pool.query(
     `INSERT INTO monitored_addresses (address, user_id, is_active)
@@ -57,6 +89,22 @@ export async function getTransactionsForAddress(addrLower: string, opts: { page:
      ORDER BY block_number DESC NULLS LAST, log_index DESC
      LIMIT $2 OFFSET $3`,
     [addrLower, opts.limit, offset]
+  );
+  return r.rows;
+}
+
+export async function getTransactionsForUser(uid: string, opts: { page: number; limit: number; }) {
+  const addrs = await getUserAddresses(uid);
+  if (addrs.length === 0) return [];
+  const lowers = addrs.map(a => a.toLowerCase());
+  const offset = (opts.page - 1) * opts.limit;
+  const r = await pool.query(
+    `SELECT tx_hash, log_index, block_number, from_address, to_address, amount, status, timestamp, source, asset_symbol, asset_contract, is_native
+     FROM token_transactions
+     WHERE from_address = ANY($1::text[]) OR to_address = ANY($1::text[])
+     ORDER BY block_number DESC NULLS LAST, log_index DESC
+     LIMIT $2 OFFSET $3`,
+    [lowers, opts.limit, offset]
   );
   return r.rows;
 }

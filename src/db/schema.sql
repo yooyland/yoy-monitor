@@ -41,3 +41,11 @@ CREATE TABLE IF NOT EXISTS sync_state (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- user scoped addresses
+CREATE TABLE IF NOT EXISTS user_addresses (
+  uid TEXT NOT NULL,
+  address TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (uid, address)
+);
+

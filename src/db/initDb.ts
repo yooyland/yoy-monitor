@@ -46,6 +46,14 @@ export async function initDb(options: InitOptions = {}) {
         PRIMARY KEY (address, asset_key)
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_addresses (
+        uid TEXT NOT NULL,
+        address TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (uid, address)
+      )
+    `);
   } catch (e: any) {
     const msg = String(e?.message || e);
     console.warn('[DB] initDb error:', msg);
