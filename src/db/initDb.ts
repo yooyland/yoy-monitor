@@ -22,8 +22,13 @@ export async function initDb(options: InitOptions = {}) {
   try {
     const schemaPath = path.join(__dirname, 'schema.sql');
     const sql = fs.readFileSync(schemaPath, 'utf8');
+    const u = new URL(ENV.DATABASE_URL);
     pool = new Pool({
-      connectionString: ENV.DATABASE_URL,
+      host: u.hostname,
+      port: Number(u.port || 5432),
+      user: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      database: u.pathname.replace(/^\\//, ''),
       ssl: { rejectUnauthorized: false },
     });
     await pool.query(sql);
