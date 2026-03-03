@@ -9,7 +9,8 @@ import {
   getTransactionsForAddress,
   getBalanceMulti,
   getBalancesForUser,
-  getTransactionsForUser
+  getTransactionsForUser,
+  getUserAddressesWithSource
 } from '../db/index.js';
 import { normalizeAddress } from '../services/erc20.js';
 import { refreshBalance } from '../services/balances.js';
@@ -22,6 +23,19 @@ export function startApiServer() {
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true, chainId: ENV.CHAIN_ID });
+  });
+
+  // Debug: show address linkage sources
+  app.get('/debug/me/addresses', firebaseAuth, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid as string | undefined;
+      if (!uid) return res.status(401).json({ error: 'unauthorized' });
+      const details = await getUserAddressesWithSource(uid);
+      const addresses = Array.from(new Set(details.map(d => d.address)));
+      res.json({ ok: true, uid, addresses, details });
+    } catch (e:any) {
+      res.status(400).json({ error: e?.message || String(e) });
+    }
   });
 
   // Authenticated: current user's addresses
@@ -58,13 +72,22 @@ export function startApiServer() {
     try {
       const uid = (req as any).user?.uid as string | undefined;
       if (!uid) return res.status(401).json({ error: 'unauthorized' });
-      // Proactively refresh all linked addresses to avoid stale/empty sums
-      try {
-        const addrs = await getUserAddresses(uid);
-        for (const a of addrs) { void refreshBalance(a).catch(() => {}); }
-      } catch {}
+      const addrs = await getUserAddresses(uid);
+      // Proactively refresh all linked addresses (await completions)
+      const results = await Promise.allSettled(addrs.map(a => refreshBalance(a)));
+      const failures = results
+        .map((r, i) => ({ r, address: addrs[i] }))
+        .filter(x => x.r.status === 'rejected')
+        .map(x => ({ address: x.address, error: String((x.r as PromiseRejectedResult).reason || '') }));
       const balances = await getBalancesForUser(uid);
-      res.json({ ok: true, uid, balances });
+      res.json({
+        ok: true,
+        uid,
+        addresses: addrs,
+        refreshed: { success: results.filter(r => r.status === 'fulfilled').length, fail: failures.length },
+        balances,
+        debug: { failures }
+      });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || String(e) });
     }
@@ -77,8 +100,9 @@ export function startApiServer() {
       if (!uid) return res.status(401).json({ error: 'unauthorized' });
       const page = Math.max(1, Number(req.query.page || 1));
       const limit = Math.min(100, Math.max(1, Number(req.query.limit || 25)));
+      const addrs = await getUserAddresses(uid);
       const txs = await getTransactionsForUser(uid, { page, limit });
-      res.json({ ok: true, uid, page, limit, transactions: txs });
+      res.json({ ok: true, uid, page, limit, addressesUsed: addrs.map(a=>a.toLowerCase()), transactions: txs });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || String(e) });
     }

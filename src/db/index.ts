@@ -58,6 +58,17 @@ export async function getUserAddresses(uid: string): Promise<string[]> {
   return r.rows.map((x: any) => String(x.address));
 }
 
+export async function getUserAddressesWithSource(uid: string): Promise<Array<{address:string;source:string}>> {
+  const r = await pool.query(
+    `SELECT address, 'user_addresses' as source FROM user_addresses WHERE uid=$1
+     UNION ALL
+     SELECT address, 'monitored_addresses.user_id' as source FROM monitored_addresses WHERE user_id=$1 AND is_active=TRUE`,
+    [uid]
+  );
+  // keep possible dups (for diagnostics)
+  return r.rows.map((x: any) => ({ address: String(x.address), source: String(x.source) }));
+}
+
 export async function getBalancesForUser(uid: string): Promise<Record<string, string>> {
   // Aggregate sums across all addresses for the user
   const addrs = await getUserAddresses(uid);
