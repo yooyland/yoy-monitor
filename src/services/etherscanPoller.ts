@@ -95,19 +95,27 @@ type TokenTx = {
 };
 
 async function fetchTokenTxList(addressLower: string): Promise<TokenTx[]> {
-  // Query per monitored token to reduce noise and ensure symbol/decimals match
+  // Query per monitored token with pagination to capture historical transfers
   const toks = getMonitoredTokens();
   const all: TokenTx[] = [];
+  const pageSize = 1000; // Etherscan allows up to 10,000; stay conservative
+  const maxPages = 15;   // up to 15k rows per token+address
   for (const t of toks) {
-    try {
-      const url = `https://api.etherscan.io/api?module=account&action=tokentx&contractaddress=${t.address}&address=${addressLower}&page=1&offset=100&sort=desc&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
-      const res = await fetch(url);
-      const data = (await res.json()) as any;
-      if (!data?.result || !Array.isArray(data.result)) continue;
-      for (const j of data.result as any[]) {
-        all.push(j as TokenTx);
+    for (let page = 1; page <= maxPages; page++) {
+      try {
+        const url = `https://api.etherscan.io/api?module=account&action=tokentx&contractaddress=${t.address}` +
+          `&address=${addressLower}&startblock=0&endblock=99999999&page=${page}&offset=${pageSize}&sort=desc&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
+        const res = await fetch(url);
+        const data = (await res.json()) as any;
+        if (!data?.result || !Array.isArray(data.result) || data.result.length === 0) break;
+        for (const j of data.result as any[]) {
+          all.push(j as TokenTx);
+        }
+        if (data.result.length < pageSize) break;
+      } catch {
+        break;
       }
-    } catch {}
+    }
   }
   return all;
 }
@@ -137,18 +145,17 @@ export async function pollAddressesOnce(addressesLower: string[]) {
       for (const tt of tokTxs) {
         try {
           if (await hasTxHashAnyIndex(tt.hash)) continue;
-          // Only process if this address is either sender or receiver and is monitored (it should be)
-          const involvesMon =
-            isMonitoredLower(String(tt.from || '').toLowerCase()) ||
-            isMonitoredLower(String(tt.to || '').toLowerCase());
-          if (!involvesMon) continue;
+          // Only process if this address is either sender or receiver
+          const fromLower = String(tt.from || '').toLowerCase();
+          const toLower = String(tt.to || '').toLowerCase();
+          if (fromLower !== addrLower && toLower !== addrLower) continue;
           const symbol = String(tt.tokenSymbol || 'YOY').toUpperCase();
           await insertTx({
             txHash: tt.hash,
             logIndex: -1,
             blockNumber: Number(tt.blockNumber || 0),
-            from: String(tt.from || '').toLowerCase(),
-            to: String(tt.to || '').toLowerCase(),
+            from: fromLower,
+            to: toLower,
             amount: String(tt.value || '0'),
             status: 'success', // Etherscan tokentx doesn't include receipt status; assume success here
             timestamp: new Date(Number(tt.timeStamp || '0') * 1000),
@@ -173,10 +180,9 @@ export async function pollAddressesOnce(addressesLower: string[]) {
             const decoded = tryDecodeToAndValue(tx.input);
             const decodedTo = decoded?.to || null;
             const decodedVal = decoded?.value || null;
-            const involvesMonitored =
-              isMonitoredLower((tx.from || '').toLowerCase()) ||
-              (decodedTo ? isMonitoredLower(decodedTo.toLowerCase()) : false);
-            if (!involvesMonitored) continue;
+            const fromLower = String(tx.from || '').toLowerCase();
+            const toLower = (decodedTo || String(tx.to || '')).toLowerCase();
+            if (fromLower !== addrLower && toLower !== addrLower) continue;
 
             if (await hasTxHashAnyIndex(tx.hash)) continue; // already seen via logs
 
@@ -187,8 +193,8 @@ export async function pollAddressesOnce(addressesLower: string[]) {
               txHash: tx.hash,
               logIndex: -1, // Etherscan rows always -1 (ERC-20)
               blockNumber: Number(tx.blockNumber || 0),
-              from: String(tx.from || '').toLowerCase(),
-              to: (decodedTo || String(tx.to || '')).toLowerCase(),
+              from: fromLower,
+              to: toLower,
               amount: decodedVal ? decodedVal : null,
               status,
               timestamp: new Date(Number(tx.timeStamp || '0') * 1000),
@@ -203,10 +209,9 @@ export async function pollAddressesOnce(addressesLower: string[]) {
           // Native ETH transfer: value > 0
           const val = BigInt(tx.value || '0');
           if (val > 0n) {
-            const involvesMonitored =
-              isMonitoredLower((tx.from || '').toLowerCase()) ||
-              isMonitoredLower((tx.to || '').toLowerCase());
-            if (!involvesMonitored) continue;
+            const fromLower = String(tx.from || '').toLowerCase();
+            const toLower = String(tx.to || '').toLowerCase();
+            if (fromLower !== addrLower && toLower !== addrLower) continue;
             if (await hasTxHashAnyIndex(tx.hash)) continue;
             const status = await getTxReceiptStatus(tx.hash);
             if (!status) continue;
@@ -214,8 +219,8 @@ export async function pollAddressesOnce(addressesLower: string[]) {
               txHash: tx.hash,
               logIndex: -2, // Native ETH marker to avoid clash with -1
               blockNumber: Number(tx.blockNumber || 0),
-              from: String(tx.from || '').toLowerCase(),
-              to: String(tx.to || '').toLowerCase(),
+              from: fromLower,
+              to: toLower,
               amount: val.toString(),
               status,
               timestamp: new Date(Number(tx.timeStamp || '0') * 1000),
