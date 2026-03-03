@@ -7,7 +7,7 @@
     "db:init": "node ./dist/db/initDb.js",
     "dev": "ts-node ./src/index.ts",
     "build": "tsc -p tsconfig.json && node -e \"require('fs').mkdirSync('dist/db',{recursive:true}); require('fs').copyFileSync('src/db/schema.sql','dist/db/schema.sql');\"",
-    "start": "node ./dist/index.js"
+    "start": "node --trace-uncaught --unhandled-rejections=strict ./dist/index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
