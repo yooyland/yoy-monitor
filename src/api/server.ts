@@ -100,6 +100,24 @@ export function startApiServer() {
     }
   });
 
+  // DEBUG: Unauthenticated address registration and immediate tokentx backfill
+  app.post('/debug/register-address', async (req, res) => {
+    try {
+      const raw = String(req.body?.address || '');
+      if (!raw) return res.status(400).json({ error: 'address required' });
+      const checksum = normalizeAddress(raw);
+      await upsertAddress(checksum, undefined);
+      try { await refreshBalance(checksum); } catch {}
+      try {
+        const { pollAddressesOnce } = await import('../services/etherscanPoller.js');
+        void pollAddressesOnce([checksum.toLowerCase()]);
+      } catch {}
+      res.json({ ok: true, address: checksum, note: 'debug registration queued backfill' });
+    } catch (e: any) {
+      res.status(400).json({ error: e?.message || String(e) });
+    }
+  });
+
   // Get balance for an address; if ?asset= omitted, returns multi-assets map
   app.get('/balances/:address', async (req, res) => {
     try {
