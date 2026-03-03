@@ -39,11 +39,12 @@ export async function getBalanceMulti(addrChecksum: string, assetKey: string): P
 }
 
 export async function upsertUserAddress(uid: string, addrChecksum: string) {
+  const addrLower = String(addrChecksum).toLowerCase();
   await pool.query(
     `INSERT INTO user_addresses (uid, address)
      VALUES ($1, $2)
      ON CONFLICT (uid, address) DO NOTHING`,
-    [uid, addrChecksum]
+    [uid, addrLower]
   );
 }
 
@@ -55,7 +56,8 @@ export async function getUserAddresses(uid: string): Promise<string[]> {
      SELECT address FROM monitored_addresses WHERE user_id=$1 AND is_active=TRUE`,
     [uid]
   );
-  return r.rows.map((x: any) => String(x.address));
+  // normalize lower
+  return r.rows.map((x: any) => String(x.address).toLowerCase());
 }
 
 export async function getUserAddressesWithSource(uid: string): Promise<Array<{address:string;source:string}>> {
@@ -66,7 +68,7 @@ export async function getUserAddressesWithSource(uid: string): Promise<Array<{ad
     [uid]
   );
   // keep possible dups (for diagnostics)
-  return r.rows.map((x: any) => ({ address: String(x.address), source: String(x.source) }));
+  return r.rows.map((x: any) => ({ address: String(x.address).toLowerCase(), source: String(x.source) }));
 }
 
 export async function getBalancesForUser(uid: string): Promise<Record<string, string>> {
