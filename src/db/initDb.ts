@@ -28,7 +28,7 @@ export async function initDb(options: InitOptions = {}) {
       port: Number(u.port || 5432),
       user: decodeURIComponent(u.username),
       password: decodeURIComponent(u.password),
-      database: u.pathname.replace(/^\\//, ''),
+      database: u.pathname.replace(/^\//, ''),
       ssl: { rejectUnauthorized: false },
     });
     await pool.query(sql);
