@@ -22,15 +22,16 @@ async function main() {
   // Optional: Round-robin etherscan polling for failure/missed detection.
   // In a real deployment you would retrieve addresses from DB and batch them here.
   // Example placeholder (no-op by default). Implement an address fetch + call pollAddressesOnce(list)
-  setInterval(async () => {
-    try {
-      const list = (await getAllActiveAddresses()).map(a => a.toLowerCase());
-      const batch = list.slice(0, ENV.BATCH_SIZE);
-      if (batch.length) await pollAddressesOnce(batch);
-    } catch (e) {
-      console.warn('[App] etherscan batch poll error:', String((e as any)?.message || e));
-    }
-  }, ENV.ETHERSCAN_POLL_INTERVAL);
+  // TEMP DISABLED: etherscan polling loop
+  // setInterval(async () => {
+  //   try {
+  //     const list = (await getAllActiveAddresses()).map(a => a.toLowerCase());
+  //     const batch = list.slice(0, ENV.BATCH_SIZE);
+  //     if (batch.length) await pollAddressesOnce(batch);
+  //   } catch (e) {
+  //     console.warn('[App] etherscan batch poll error:', String((e as any)?.message || e));
+  //   }
+  // }, ENV.ETHERSCAN_POLL_INTERVAL);
 
   // Start HTTP API for app integration
   startApiServer();
