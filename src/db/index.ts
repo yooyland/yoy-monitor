@@ -8,8 +8,9 @@ const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
 export const pool = new Pool({
   connectionString: ENV.DATABASE_URL,
-  // SSL이 필요한 호스팅의 경우 아래 주석 해제
-  // ssl: { rejectUnauthorized: false }
+  ssl: process.env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
+    : undefined
 });
 
 export async function initDb() {
