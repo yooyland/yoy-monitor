@@ -58,6 +58,11 @@ export function startApiServer() {
     try {
       const uid = (req as any).user?.uid as string | undefined;
       if (!uid) return res.status(401).json({ error: 'unauthorized' });
+      // Proactively refresh all linked addresses to avoid stale/empty sums
+      try {
+        const addrs = await getUserAddresses(uid);
+        for (const a of addrs) { void refreshBalance(a).catch(() => {}); }
+      } catch {}
       const balances = await getBalancesForUser(uid);
       res.json({ ok: true, uid, balances });
     } catch (e: any) {
