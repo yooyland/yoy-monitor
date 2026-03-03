@@ -31,8 +31,11 @@ async function fetchJsonWithLogs(url: string): Promise<any | null> {
     const status = res.status;
     const text = await res.text();
     try { console.log('[Etherscan] GET', masked, 'status=', status, 'ct=', ct, 'body.head=', text.slice(0, 120)); } catch {}
-    if (!ct.toLowerCase().includes('json')) return null;
-    try { return JSON.parse(text); } catch { return null; }
+    // Guard: Non-JSON responses (e.g., HTML error pages)
+    if (!text.trim().startsWith('{')) {
+      throw new Error('Non-JSON from Etherscan: ' + text.slice(0, 80));
+    }
+    try { return JSON.parse(text); } catch { throw new Error('JSON parse failed'); }
   } catch (e) {
     console.warn('[Etherscan] fetch failed', masked, String((e as any)?.message || e));
     return null;
@@ -68,7 +71,7 @@ function tryDecodeToAndValue(input: string) {
 
 async function getTxReceiptStatus(txhash: string): Promise<'success'|'failed'|null> {
   try {
-    const url = `https://api.etherscan.io/api?module=transaction&action=gettxreceiptstatus&txhash=${txhash}&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
+    const url = `https://api.etherscan.io/v2/api?chainid=1&module=transaction&action=gettxreceiptstatus&txhash=${txhash}&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
     const data = await fetchJsonWithLogs(url);
     if (!data) return null;
     const s = data?.result?.status;
@@ -81,7 +84,7 @@ async function getTxReceiptStatus(txhash: string): Promise<'success'|'failed'|nu
 }
 
 async function fetchTxList(address: string) {
-  const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=desc&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
+  const url = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=desc&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
   const data = await fetchJsonWithLogs(url);
   if (!data?.result || !Array.isArray(data.result)) {
     console.log('No result from Etherscan');
@@ -122,7 +125,7 @@ async function fetchTokenTxList(addressLower: string): Promise<TokenTx[]> {
   for (const t of toks) {
     for (let page = 1; page <= maxPages; page++) {
       try {
-        const url = `https://api.etherscan.io/api?module=account&action=tokentx&contractaddress=${t.address}` +
+        const url = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&contractaddress=${t.address}` +
           `&address=${addressLower}&startblock=0&endblock=99999999&page=${page}&offset=${pageSize}&sort=desc&apikey=${encodeURIComponent(ENV.ETHERSCAN_API_KEY)}`;
         const data = await fetchJsonWithLogs(url);
         if (!data?.result || !Array.isArray(data.result) || data.result.length === 0) break;
