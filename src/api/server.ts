@@ -75,57 +75,105 @@ export function startApiServer() {
     try {
       const uid = (req as any).user?.uid as string | undefined;
       if (!uid) return res.status(401).json({ error: 'unauthorized' });
-      const addrs = await getUserAddresses(uid);
+
+      const listRaw = await getUserAddresses(uid);
+      // Defensive: ensure unique lowercased addresses (avoids duplicate refresh/count confusion)
+      const addrs = Array.from(new Set(listRaw.map((a) => String(a).toLowerCase())));
       if (addrs.length === 0) {
-        return res.json({ ok: true, uid, addresses: [], balances: {}, refreshed: { success: 0, fail: 0 }, debug: { failures: [] } });
+        return res.json({ ok: true, uid, addresses: [], balances: {}, refreshed: { success: 0, fail: 0 }, debug: { failures: [], note: 'no addresses registered' } });
       }
+
       const provider = new JsonRpcProvider(ENV.INFURA_HTTPS, ENV.CHAIN_ID);
       const yoy = new Contract(ENV.YOY_CONTRACT, erc20Iface, provider);
-      const failures: Array<{address: string; error: string}> = [];
+      const failures: Array<{ address: string; error: string }> = [];
       const queue = addrs.slice();
       const perAddress: Record<string, { YOY?: string; ETH?: string }> = {};
+
       const worker = async () => {
         while (queue.length) {
           const a = queue.shift()!;
           try {
             // YOY balance with simple backoff on 429
-            let retries = 0; let ok = false; let yoyWei = '0';
+            let retries = 0;
+            let ok = false;
+            let yoyWei = '0';
             while (!ok && retries < 4) {
               try {
                 const raw = await yoy.balanceOf(a);
-                yoyWei = raw.toString(); ok = true;
-              } catch (e:any) {
-                if (String(e?.message||'').includes('429')) { await new Promise(r=>setTimeout(r, 500 * Math.pow(2, retries))); retries++; } else { throw e; }
+                yoyWei = raw.toString();
+                ok = true;
+              } catch (e: any) {
+                if (String(e?.message || '').includes('429')) {
+                  await new Promise((r) => setTimeout(r, 500 * (2 ** retries)));
+                  retries++;
+                } else {
+                  throw e;
+                }
               }
             }
+
             // ETH balance with backoff
-            retries = 0; ok = false; let ethWei = '0';
+            retries = 0;
+            ok = false;
+            let ethWei = '0';
             while (!ok && retries < 4) {
               try {
                 const raw = await provider.getBalance(a);
-                ethWei = raw.toString(); ok = true;
-              } catch (e:any) {
-                if (String(e?.message||'').includes('429')) { await new Promise(r=>setTimeout(r, 500 * Math.pow(2, retries))); retries++; } else { throw e; }
+                ethWei = raw.toString();
+                ok = true;
+              } catch (e: any) {
+                if (String(e?.message || '').includes('429')) {
+                  await new Promise((r) => setTimeout(r, 500 * (2 ** retries)));
+                  retries++;
+                } else {
+                  throw e;
+                }
               }
             }
+
             perAddress[a] = { YOY: yoyWei, ETH: ethWei };
-          } catch (e:any) {
-            failures.push({ address: a, error: String(e?.message||e) });
+          } catch (e: any) {
+            failures.push({ address: a, error: String(e?.message || e) });
           }
         }
       };
+
       await Promise.all([worker(), worker(), worker()]);
-      // Sum across addresses
-      const toBig = (s: string) => { try { return BigInt(s||'0'); } catch { return 0n; } };
-      let sumYOY = 0n, sumETH = 0n;
-      for (const v of Object.values(perAddress)) { sumYOY += toBig(v.YOY||'0'); sumETH += toBig(v.ETH||'0'); }
+
+      const toBig = (s: string) => {
+        try {
+          return BigInt(s || '0');
+        } catch {
+          return 0n;
+        }
+      };
+      let sumYOY = 0n;
+      let sumETH = 0n;
+      for (const v of Object.values(perAddress)) {
+        sumYOY += toBig(v.YOY || '0');
+        sumETH += toBig(v.ETH || '0');
+      }
+
       const balances = { YOY: sumYOY.toString(), ETH: sumETH.toString() };
-      res.json({ ok: true, uid, addresses: addrs, refreshed: { success: addrs.length - failures.length, fail: failures.length }, balances, perAddress, debug: { failures } });
+      res.json({
+        ok: true,
+        uid,
+        addresses: addrs,
+        refreshed: { success: addrs.length - failures.length, fail: failures.length },
+        balances,
+        perAddress,
+        debug: {
+          failures,
+          asOf: new Date().toISOString(),
+          units: 'wei',
+          tokenDecimals: { YOY: 18, ETH: 18 },
+          note: 'Balances are fetched live from chain via Infura (not from cached DB). If a tx is pending, results may change after it is mined.',
+        },
+      });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || String(e) });
     }
   });
-
   // Transactions across all owned addresses
   app.get('/me/transactions', firebaseAuth, async (req, res) => {
     try {

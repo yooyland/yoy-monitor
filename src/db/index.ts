@@ -1,16 +1,15 @@
 import { Pool } from 'pg';
-import { ENV } from '../config/env.js';
+import { getResolvedDatabaseConnection, pgSslOption } from '../config/dbConnection.js';
 import fs from 'fs';
 import path from 'path';
 import url from 'url';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
+const __resolvedDb = getResolvedDatabaseConnection();
 export const pool = new Pool({
-  connectionString: ENV.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : undefined
+  connectionString: __resolvedDb.connectionString,
+  ssl: pgSslOption(__resolvedDb),
 });
 
 export async function initDb() {
@@ -49,25 +48,29 @@ export async function upsertUserAddress(uid: string, addrChecksum: string) {
 }
 
 export async function getUserAddresses(uid: string): Promise<string[]> {
-  // Union of explicit user_addresses and monitored_addresses.user_id linkage
+  // Return normalized lowercased addresses (deduped), regardless of source table casing.
+  // NOTE: monitored_addresses.address may be stored in checksum/mixed-case.
   const r = await pool.query(
-    `SELECT address FROM user_addresses WHERE uid=$1
-     UNION
-     SELECT address FROM monitored_addresses WHERE user_id=$1 AND is_active=TRUE`,
+    `SELECT DISTINCT lower(address) as address FROM (
+        SELECT address FROM user_addresses WHERE uid=$1
+        UNION ALL
+        SELECT address FROM monitored_addresses WHERE user_id=$1 AND is_active=TRUE
+     ) s`,
     [uid]
   );
-  // normalize lower
   return r.rows.map((x: any) => String(x.address).toLowerCase());
 }
 
 export async function getUserAddressesWithSource(uid: string): Promise<Array<{address:string;source:string}>> {
   const r = await pool.query(
-    `SELECT address, 'user_addresses' as source FROM user_addresses WHERE uid=$1
-     UNION ALL
-     SELECT address, 'monitored_addresses.user_id' as source FROM monitored_addresses WHERE user_id=$1 AND is_active=TRUE`,
+    `SELECT lower(address) as address, source FROM (
+        SELECT address, 'user_addresses' as source FROM user_addresses WHERE uid=$1
+        UNION ALL
+        SELECT address, 'monitored_addresses.user_id' as source FROM monitored_addresses WHERE user_id=$1 AND is_active=TRUE
+     ) s`,
     [uid]
   );
-  // keep possible dups (for diagnostics)
+  // keep possible dups (for diagnostics), but normalize casing
   return r.rows.map((x: any) => ({ address: String(x.address).toLowerCase(), source: String(x.source) }));
 }
 
@@ -115,7 +118,6 @@ export async function getTransactionsForAddress(addrLower: string, opts: { page:
 export async function getTransactionsForUser(uid: string, opts: { page: number; limit: number; }) {
   const addrs = await getUserAddresses(uid);
   if (addrs.length === 0) return [];
-  const lowers = addrs.map(a => a.toLowerCase());
   const offset = (opts.page - 1) * opts.limit;
   const r = await pool.query(
     `SELECT tx_hash, log_index, block_number, from_address, to_address, amount, status, timestamp, source, asset_symbol, asset_contract, is_native
@@ -123,7 +125,7 @@ export async function getTransactionsForUser(uid: string, opts: { page: number; 
      WHERE from_address = ANY($1::text[]) OR to_address = ANY($1::text[])
      ORDER BY block_number DESC NULLS LAST, log_index DESC
      LIMIT $2 OFFSET $3`,
-    [lowers, opts.limit, offset]
+    [addrs, opts.limit, offset]
   );
   return r.rows;
 }
@@ -202,4 +204,3 @@ export async function setSyncCursor(block: number) {
     [String(block)]
   );
 }
-
